@@ -1,0 +1,227 @@
+# ==============================================================================
+# STEP-LEVEL REPLAY CONFIGURATION FOR FROZENLAKE (REINFORCE)
+# ==============================================================================
+# 基于 trajectory 版本配置，使用 reinforce 算法和更合理的 sequence_length: 512
+# StepEnvManager -> StepReplayBuffer 自动选择
+# ==============================================================================
+defaults:
+  - ../../ROLL/examples/config/step_envs@_here_
+  - ../../ROLL/examples/config/deepspeed_zero@_here_
+  - ../../ROLL/examples/config/deepspeed_zero2@_here_
+  - ../../ROLL/examples/config/deepspeed_zero3@_here_
+  - ../../ROLL/examples/config/deepspeed_zero3_cpuoffload@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+exp_name: "agentic_pipeline"
+seed: 42
+timestamp: ${oc.env:TRAINING_TIMESTAMP,${now:%Y%m%d_%H%M%S}}
+base_output_dir: /mnt/chensiheng/weiyu/xueban_v2/roll_dev/experiments/reproduce_frozen_lake_replay/output
+logging_dir: ${base_output_dir}/${timestamp}/logs
+output_dir: ${base_output_dir}/${timestamp}
+render_save_dir: ${base_output_dir}/${timestamp}/render
+system_envs:
+  USE_MODELSCOPE: '1'
+
+track_with: wandb
+tracker_kwargs:
+  project: roll-agentic-replay
+  name: ${timestamp}_${exp_name}_step_replay
+  notes: "Step-level Replay Buffer: reinforce algorithm with optimized sequence length"
+  tags: [agentic, roll, frozen_lake, step_replay, reinforce]
+  mode: offline
+  dir: ${base_output_dir}/${timestamp}/wandb
+
+checkpoint_config:
+  type: file_system
+  output_dir: ${base_output_dir}/${timestamp}/models/${exp_name}
+
+# =============================================================================
+# TRAINING CONFIGURATION (optimized based on gigpo)
+# =============================================================================
+
+num_gpus_per_node: 8
+
+max_steps: 100
+save_steps: 10000
+logging_steps: 1
+eval_steps: 5
+resume_from_checkpoint: false
+
+# Batch and algorithm settings
+adv_estimator: "reinforce"  # 使用reinforce而不是gigpo
+batch_adjust_mode: "auto"    # 改回auto，与trajectory版本一致
+
+# Generation settings
+async_generation_ratio: 1
+
+# Batch and sequence settings (OPTIMIZED!)
+rollout_batch_size: 1024
+val_batch_size: 1024
+sequence_length: 512  # 降低到 512，更适合 FrozenLake
+
+# RL algorithm settings (与trajectory版本保持一致)
+advantage_clip: 0.2
+ppo_epochs: 1
+init_kl_coef: 0.0
+whiten_advantages: true      # reinforce需要whiten advantages
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+
+pretrain: /mnt/chensiheng/model/QWEN05B
+reward_pretrain: /mnt/chensiheng/model/QWEN05B
+
+actor_train:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: false
+    dtype: bf16
+    model_type: ~
+  training_args:
+    learning_rate: 1.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 64  # 增大batch size，充分利用GPU内存
+    gradient_accumulation_steps: 4   # 大幅减少梯度累积步数
+    warmup_steps: 10  # 与trajectory版本保持一致
+    lr_scheduler_type: cosine
+  data_args:
+    template: qwen2_5
+  strategy_args:
+    strategy_name: deepspeed_train
+    strategy_config: ${deepspeed_zero2}  # 使用更轻量的Zero-2
+  device_mapping: list(range(0,4))  # 前4张卡用于训练
+  infer_batch_size: 64  # 增大推理batch size
+
+actor_infer:
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16
+  generating_args:
+    max_new_tokens: 128  # 与trajectory版本保持一致
+    top_p: 0.99
+    top_k: 100
+    num_beams: 1
+    temperature: 0.99
+    num_return_sequences: 1
+  data_args:
+    template: qwen2_5
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.8
+      block_size: 16
+      load_format: auto
+  device_mapping: list(range(4,8))  # 后4张卡用于推理
+
+reference:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: true
+    dtype: bf16
+    model_type: ~
+  data_args:
+    template: qwen2_5
+  strategy_args:
+    strategy_name: hf_infer
+    strategy_config: ~
+  device_mapping: list(range(0,4))  # 与训练共享前4张卡
+  infer_batch_size: 64  # 增大推理batch size
+
+# =============================================================================
+# ENVIRONMENT CONFIGURATION
+# =============================================================================
+
+# Action format patterns
+action_pattern: <answer>(.*?)</answer>
+think_action_pattern: <think>(.*?)</think>\s*<answer>(.*?)</answer>
+user_prompt_no_think_format: <answer> [your answer] </answer>
+user_prompt_think_format: <think> [Your thoughts] </think> <answer> [your answer] </answer>
+added_text_no_think: <answer>
+added_text_think: <think>
+
+# Environment limits
+max_tokens_per_step: 128  # 与trajectory版本保持一致
+max_actions_per_traj: 10
+
+reward_normalization:
+  grouping: traj_group_id
+  method: mean_std  # 与trajectory版本保持一致
+
+train_env_manager:
+  format_penalty: -0.15  # 与trajectory版本保持一致
+  max_env_num_per_worker: 16
+  num_env_groups: 128
+  group_size: 8
+  tags: [FrozenLake]
+  num_groups_partition: [128]
+
+val_env_manager:
+  max_env_num_per_worker: 32
+  num_env_groups: 1024
+  group_size: 1
+  tags: [FrozenLake]
+  num_groups_partition: [1024]
+
+custom_envs:
+  FrozenLake:
+    env_type: frozen_lake
+    max_tokens_per_step: ${max_tokens_per_step}
+    user_prompt_format: ${user_prompt_no_think_format}
+    added_text: ${added_text_no_think}
+    agent_system_template: |
+      You're a helpful assistant. You are a good game player. You are aiming to get high reward in the game.
+    agent_template: |
+      ## Env Instruction: {env_instruction}
+      
+      ## State Description: 
+      Prior to this step, you have completed {step_count} steps. 
+      Recent History: Below are the most recent {history_length} observations, the corresponding actions you took, and the environmental reward feedback:
+      [{history}]
+      
+      Current State:
+      You are currently at step {current_step}. Your current observation is: [{current_observation}]
+      
+      ## Output Format Requirement: 
+      Your response *must* strictly adhere to the following format: <answer> [your answer] </answer>, like <answer> [your answer] </answer>, with no extra text.
+      Response Length Limit: Your output must not exceed {max_response_length} words (tokens).
+      
+      Determine the Next Action:
+    reward_template: "Feedback: Your previous action received reward {reward}. Revise your plan if needed."
+    env_manager_cls: roll.pipeline.agentic.env_manager.step_env_manager.StepEnvManager  # 关键：使用 StepEnvManager
+    use_thread_lock: true
+    env_config:
+      env_instruction: "You are solving the FrozenLake puzzle. Forbid the whole and go to the target. You may move to the unintended direction due to the slippery ice. The answer must be one of action in a turn, format is <answer>Right</answer>"
+      action_pattern: ${action_pattern}
+      max_steps: ${max_actions_per_traj}
+      is_slippery: false
+
+# =============================================================================
+# STEP-BASED REPLAY BUFFER CONFIGURATION
+# =============================================================================
+
+replay:
+  # 基本设置
+  enabled: true
+  
+  # 容量与训练节奏（step 级）
+  capacity: 1000000              # 适当降低容量
+  min_size: ${rollout_batch_size}
+  train_steps_per_env_step: 1
+  minibatch_size: 1024
+  
+  # 批对齐
+  use_rollout_batch_size: true
+  
+  # 采样方法
+  sample_method: lifo        # 与trajectory版本保持一致
+  
+  # 存储模式
+  storage_mode: tokens_only
+  lazy_tokenization: false

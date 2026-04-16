@@ -1,0 +1,223 @@
+# ==============================================================================
+# NO-REPLAY BASELINE CONFIGURATION FOR FROZENLAKE (copied from step-based config)
+# ==============================================================================
+# 与 step-based replay 配置保持一致，仅关闭 replay buffer 方便做公平对比。
+# ==============================================================================
+defaults:
+  - ../../ROLL/examples/config/traj_envs@_here_
+  - ../../ROLL/examples/config/deepspeed_zero@_here_
+  - ../../ROLL/examples/config/deepspeed_zero2@_here_
+  - ../../ROLL/examples/config/deepspeed_zero3@_here_
+  - ../../ROLL/examples/config/deepspeed_zero3_cpuoffload@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+exp_name: "agentic_pipeline"
+seed: 42
+timestamp: ${oc.env:TRAINING_TIMESTAMP,${now:%Y%m%d_%H%M%S}}
+base_output_dir: /mnt/chensiheng/weiyu/xueban_v2/roll_dev/experiments/reproduce_frozen_lake_replay/output
+logging_dir: ${base_output_dir}/${timestamp}/logs
+output_dir: ${base_output_dir}/${timestamp}
+render_save_dir: ${base_output_dir}/${timestamp}/render
+system_envs:
+  USE_MODELSCOPE: '1'
+
+track_with: wandb
+tracker_kwargs:
+  project: roll-agentic-replay
+  name: ${timestamp}_${exp_name}_no_replay
+  notes: "No Replay Buffer: trajectory-level baseline"
+  tags: [agentic, roll, frozen_lake, no_replay, baseline]
+  mode: offline
+  dir: ${base_output_dir}/${timestamp}/wandb
+
+checkpoint_config:
+  type: file_system
+  output_dir: ${base_output_dir}/${timestamp}/models/${exp_name}
+
+# =============================================================================
+# TRAINING CONFIGURATION
+# =============================================================================
+
+num_gpus_per_node: 8
+
+# 与开启replay的文件保持一致，便于对比
+max_steps: 100
+save_steps: 10000
+logging_steps: 1
+eval_steps: 5
+resume_from_checkpoint: false
+
+# Keep replay-only training disabled for baseline
+train_from_replay_only: false
+
+# 批大小自动调整（与原文件一致）
+batch_adjust_mode: auto
+
+# Generation settings
+async_generation_ratio: 1
+
+# Batch and sequence settings
+rollout_batch_size: 1024
+val_batch_size: 1024
+sequence_length: 4096
+
+# RL algorithm settings
+advantage_clip: 0.2
+ppo_epochs: 1
+adv_estimator: "reinforce"
+init_kl_coef: 0.0
+whiten_advantages: true
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+
+pretrain: /mnt/chensiheng/model/QWEN05B
+reward_pretrain: /mnt/chensiheng/model/QWEN05B
+
+actor_train:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: false
+    dtype: bf16
+    model_type: ~
+  training_args:
+    learning_rate: 1.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 128
+    warmup_steps: 10
+    lr_scheduler_type: cosine
+  data_args:
+    template: qwen2_5
+  strategy_args:
+    strategy_name: deepspeed_train
+    strategy_config: ${deepspeed_zero3}
+  # strategy_args:
+  #   strategy_name: megatron_train
+  #   strategy_config:
+  #     tensor_model_parallel_size: 1
+  #     pipeline_model_parallel_size: 1
+  #     expert_model_parallel_size: 1
+  #     use_distributed_optimizer: true
+  #     recompute_granularity: full
+  device_mapping: list(range(0,4))
+  infer_batch_size: 2
+
+actor_infer:
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16
+  generating_args:
+    max_new_tokens: 128
+    top_p: 0.99
+    top_k: 100
+    num_beams: 1
+    temperature: 0.99
+    num_return_sequences: 1
+  data_args:
+    template: qwen2_5
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.8
+      block_size: 16
+      load_format: auto
+  device_mapping: list(range(4,8))
+
+reference:
+  model_args:
+    attn_implementation: fa2
+    disable_gradient_checkpointing: true
+    dtype: bf16
+    model_type: ~
+  data_args:
+    template: qwen2_5
+  strategy_args:
+    strategy_name: hf_infer
+    strategy_config: ~
+  device_mapping: list(range(0,4))
+  infer_batch_size: 2
+
+# =============================================================================
+# ENVIRONMENT CONFIGURATION
+# =============================================================================
+
+# Action format patterns
+action_pattern: <answer>(.*?)</answer>
+think_action_pattern: <think>(.*?)</think>\s*<answer>(.*?)</answer>
+user_prompt_no_think_format: <answer> [your answer] </answer>
+user_prompt_think_format: <think> [Your thoughts] </think> <answer> [your answer] </answer>
+added_text_no_think: <answer>
+added_text_think: <think>
+
+# Environment limits
+max_tokens_per_step: 128
+max_actions_per_traj: 10
+
+reward_normalization:
+  grouping: traj_group_id
+  method: mean_std
+
+train_env_manager:
+  format_penalty: -0.15
+  max_env_num_per_worker: 16
+  num_env_groups: 128
+  group_size: 8
+  tags: [FrozenLake]
+  num_groups_partition: [128]
+
+val_env_manager:
+  max_env_num_per_worker: 32
+  num_env_groups: 1024
+  group_size: 1
+  tags: [FrozenLake]
+  num_groups_partition: [1024]
+
+custom_envs:
+  FrozenLake:
+    env_type: frozen_lake
+    max_tokens_per_step: ${max_tokens_per_step}
+    user_prompt_format: ${user_prompt_no_think_format}
+    added_text: ${added_text_no_think}
+    agent_system_template: "You are an agent solving the FrozenLake puzzle. Output must be wrapped as <answer>Action</answer>."
+    agent_template: |
+      Current turn: {turn_idx}
+      Grid state:
+      {state}
+      Actions left: {actions_left}
+      Respond with one action token only, within {max_response_length} tokens.
+    reward_template: "Feedback: Your previous action received reward {reward}. Revise your plan if needed."
+    env_manager_cls: roll.pipeline.agentic.env_manager.traj_env_manager.TrajEnvManager
+    use_thread_lock: true
+    env_config:
+      env_instruction: "You are solving the FrozenLake puzzle. Forbid the whole and go to the target. You may move to the unintended direction due to the slippery ice. The answer must be one of action in a turn, format is <answer>Right</answer>"
+      action_pattern: ${action_pattern}
+      max_steps: ${max_actions_per_traj}
+      is_slippery: false
+
+# =============================================================================
+# REPLAY BUFFER CONFIGURATION (DISABLED)
+# =============================================================================
+
+replay:
+  # 仅关闭开关，其他参数保留便于对比（训练时将被忽略）
+  enabled: false
+  capacity: 100000
+  min_size: 512
+  train_steps_per_env_step: 1
+  minibatch_size: 1024
+  use_rollout_batch_size: true
+  replay_ratio: 0.1
+  sampling_mode: trajectory
+  steps_per_episode: ${max_actions_per_traj}
+  storage_mode: hybrid
+  lazy_tokenization: false
+
+

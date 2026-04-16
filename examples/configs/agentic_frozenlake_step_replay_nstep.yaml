@@ -1,0 +1,129 @@
+# Agentic Pipeline Configuration for FrozenLake with Step-Level Replay Buffer and N-Step Returns
+# Task: FrozenLake environment
+# Features:
+#   - Step-level replay buffer for off-policy training
+#   - N-step returns for better long-term credit assignment (outer layer)
+#   - Token-level GAE for within-response credit (inner layer)
+
+# ============================================================================
+# Replay Buffer Configuration (Step-Level with N-Step Returns)
+# ============================================================================
+replay:
+  enabled: true
+  capacity: 50000  # Buffer can hold 50K steps
+  batch_size: 128  # Will use rollout_batch_size if use_rollout_batch_size=true
+  use_rollout_batch_size: true
+
+  # Sampling configuration
+  sampling_mode: step  # Step-level sampling
+  sample_method: uniform  # uniform/lifo/fifo
+
+  # Training configuration
+  train_steps_per_env_step: 2  # Train 2 times per environment step
+  skip_fresh_data: false  # Still train on fresh data (Echo mode)
+
+  # N-Step Returns Configuration (Outer Layer - Step-Level)
+  enable_nstep: true
+  n_step: 5  # Use 5-step returns for FrozenLake
+  nstep_gamma: 0.99  # γ_step - standard RL discount for environment steps
+  use_nstep_in_advantage: true  # 🔑 Enable using n-step returns as outer-layer reward
+  use_bootstrap: false  # Don't use critic bootstrap for now
+
+  # Priority Experience Replay (Optional)
+  priority:
+    function: uniform  # uniform/td_error/combined
+    alpha: 0.6  # Priority exponent
+    use_importance_weights: false
+    importance_beta: 0.4
+
+# ============================================================================
+# Token-Level GAE Configuration (Inner Layer)
+# ============================================================================
+adv_estimator: gae
+gamma: 0.995  # γ_token - close to 1.0 for token-level (within response)
+lambd: 0.95  # GAE lambda
+advantage_clip: 10.0
+whiten_advantages: true
+whiten_rewards: false
+
+# ============================================================================
+# Environment Configuration
+# ============================================================================
+train_env_manager:
+  type: step  # Step-level environment manager
+  num_env_groups: 64
+  group_size: 1
+  tags:
+    - FrozenLake  # FrozenLake environment
+  max_steps_per_episode: 50
+  timeout: 300
+
+# ============================================================================
+# Policy and Training
+# ============================================================================
+rollout_batch_size: 128
+sequence_length: 512
+num_epochs: 1
+max_steps: 10000
+logging_steps: 10
+eval_steps: 500
+save_steps: 1000
+
+# Learning rates
+actor_lr: 5.0e-6
+critic_lr: 1.0e-5
+
+# PPO parameters
+pg_clip: 0.2
+value_clip: 0.2
+kl_penalty: kl
+
+# Reward configuration
+reward_clip: 10.0
+reward_normalization:
+  grouping: batch  # batch/traj_id
+  method: mean_std  # mean_std/mean/identity
+
+# ============================================================================
+# Model Configuration
+# ============================================================================
+actor_train:
+  type: megatron
+  model_name_or_path: /path/to/model
+  # ... other actor config
+
+critic:
+  type: megatron
+  model_name_or_path: /path/to/critic
+  critic_warmup: 100  # Warm up critic for 100 steps
+
+reference:
+  type: megatron
+  model_name_or_path: /path/to/reference
+
+# ============================================================================
+# Monitoring
+# ============================================================================
+offpolicy_monitor:
+  enabled: true
+  monitor_interval: 10
+  monitor_fresh_batch: false
+  monitor_replay_batch: true
+
+# ============================================================================
+# Notes
+# ============================================================================
+# 1. N-Step Returns (Outer Layer):
+#    - Computes R_t^(5) = r_t + 0.99*r_{t+1} + ... + 0.99^4*r_{t+4}
+#    - Provides better long-term credit for FrozenLake paths
+#    - Only affects which reward is used, not token-level computation
+#
+# 2. Token-Level GAE (Inner Layer):
+#    - Uses gamma=0.995 (close to 1) for token-level discounting
+#    - Computes advantages within each response
+#    - Remains unchanged regardless of outer-layer reward choice
+#
+# 3. Expected Benefits:
+#    - Better credit assignment for successful paths
+#    - Sample efficiency improvement from replay buffer
+#    - Stable training from hierarchical structure
