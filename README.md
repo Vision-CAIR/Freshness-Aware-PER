@@ -1,213 +1,171 @@
-# Freshness-Aware PER
-
-> **This repository is a fork of [alibaba/ROLL](https://github.com/alibaba/ROLL)** with a freshness-aware off-policy replay buffer (Prioritized Experience Replay with age decay) added on top.
->
-> The freshness-aware replay buffer lives under `roll/agentic/replay_buffer/`. Key additions:
-> - `reward_fresh` priority function combining `|reward|` with exponential age decay
-> - `enable_age_decay` / `age_decay` config options for step- and trajectory-level buffers
-> - Asynchronous full-buffer priority refresh (`refresh_all_age_decay`) to keep unsampled old entries properly decayed
-> - Episode index for n-step returns and hierarchical episode sampling
->
-> All other components are inherited from upstream ROLL. See the original upstream README below for the full framework documentation.
->
-> **License:** Apache 2.0 (same as upstream ROLL).
-
----
-
 <div align="center">
 
-<img src="assets/roll.jpeg" width="40%" alt="ROLL Logo">
-
-# ROLL: Reinforcement Learning Optimization for Large-Scale Learning
-
-<h4>🚀 An Efficient and User-Friendly Scaling Library for Reinforcement Learning with Large Language Models 🚀</h4>
+# Freshness-Aware Prioritized Experience Replay for LLM/VLM Reinforcement Learning
 
 <p>
-  <a href="https://github.com/alibaba/ROLL/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License">
-  </a>
-  <a href="https://github.com/alibaba/ROLL/issues">
-    <img src="https://img.shields.io/github/issues/alibaba/ROLL" alt="GitHub issues">
-  </a>
-  <a href="https://github.com/alibaba/ROLL/stargazers">
-    <img src="https://img.shields.io/github/stars/alibaba/ROLL?style=social" alt="Repo stars">
-  </a>
-  <a href="https://arxiv.org/abs/2506.06122"><img src="https://img.shields.io/static/v1?label=arXiv&message=Paper&color=red"></a>
-  <!-- 组织主页：点击跳转到 https://github.com/alibaba -->
-  <a href="./assets/roll_wechat.png" target="_blank">
-    <img src="https://img.shields.io/badge/WeChat-green?logo=wechat" alt="WeChat QR">
-  </a>
+  <a href="https://arxiv.org/abs/2604.16918"><img src="https://img.shields.io/badge/arXiv-2604.16918-b31b1b.svg" alt="arXiv"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/alibaba/ROLL"><img src="https://img.shields.io/badge/Built%20on-ROLL-ff69b4.svg" alt="Built on ROLL"></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.10+">
 </p>
+
+<p>
+<b>Weiyu Ma</b><sup>1</sup> &nbsp;
+Yongcheng Zeng<sup>2</sup> &nbsp;
+Yan Song<sup>3</sup> &nbsp;
+Xinyu Cui<sup>2</sup> &nbsp;
+Jian Zhao<sup>4</sup> &nbsp;
+Xuhui Liu<sup>1</sup> &nbsp;
+<b>Mohamed Elhoseiny</b><sup>1</sup>
+</p>
+
+<sup>1</sup> KAUST &nbsp;&nbsp; <sup>2</sup> CASIA &nbsp;&nbsp; <sup>3</sup> University College London &nbsp;&nbsp; <sup>4</sup> Zhongguancun Institute of AI
 
 </div>
 
-ROLL is an efficient and user-friendly RL library designed for Large Language Models (LLMs) utilizing Large Scale GPU resources. It significantly enhances LLM performance in key areas such as human preference alignment, complex reasoning, and multi-turn agentic interaction scenarios.
-
-Leveraging a multi-role distributed architecture with Ray for flexible resource allocation and heterogeneous task scheduling, ROLL integrates cutting-edge technologies like Megatron-Core, SGLang and vLLM to accelerate model training and inference.
-
-
-
 ---
 
-## 📢 News
+## Overview
 
-| 📣   Updates                                                                                                                                                                                                                                                                                                                            |
-|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **[08/13/2025]** 🎉 ROLL supports AMD GPUs with out-of-box image docker and Dockerfile and specific yamls under `examples/` directory. Please refer to [Installation](https://alibaba.github.io/ROLL/docs/English/QuickStart/installation).                                                                                             |
-| **[08/11/2025]** 🎉 Our Paper released, see [Part I: Tricks or Traps? A Deep Dive into RL for LLM Reasoning](https://arxiv.org/abs/2508.08221).                                                                                                                                                                                         |
-| **[08/10/2025]** 🎉 Agentic RL supports [stepwise learning](examples/qwen2.5-0.5B-agentic/agent_val_frozen_lake_gigpo.yaml), like [GiGPO](https://arxiv.org/abs/2505.10978); Distill supports [VLM](examples/qwen2.5-vl-7B-distill/distill_vl_megatron.yaml). Explore the new capabilities!                                             |
-| **[08/06/2025]** 🎉 ROLL PPT is now available, [Slides](assets/ROLL%20高效且用户友好的大模型RL训练框架.pdf).                                                                                                                                                                                                                                           |
-| **[07/31/2025]** 🎉 Refactor agentic rl design. Support agentic rl [async training](examples/qwen2.5-0.5B-agentic/agent_val_frozen_lake_async.yaml). Explore the new capabilities!                                                                                                                                                      |
-| **[07/31/2025]** 🎉 Support [DistillPipeline](examples/qwen2.5-7B-distill_megatron/run_distill_pipeline.sh)/[DpoPipeline](examples/qwen2.5-3B-dpo_megatron/run_dpo_pipeline.sh). Support [lora](examples/qwen2.5-7B-rlvr_megatron/rlvr_lora_zero3.yaml). Support [GSPO](https://arxiv.org/abs/2507.18071)                               |
-| **[06/25/2025]** 🎉 Support thread env for env scaling and support [qwen2.5 VL agentic pipeline](examples/qwen2.5-vl-3B-agentic/agentic_val_sokoban.yaml).                                                                                                                                                                              |
-| **[06/13/2025]** 🎉 Support [Qwen2.5 VL rlvr pipeline](examples/qwen2.5-vl-7B-rlvr/rlvr_megatron.yaml) and upgrade mcore to 0.12 version.                                                                                                                                                                                               |
-| **[06/09/2025]** 🎉 ROLL tech report is now available! Access the report [here](https://arxiv.org/abs/2506.06122).                                                                                                                                                                                                                      |
-| **[06/08/2025]** 🎉Supports  Qwen3([8B](examples/qwen3-8B-rlvr_megatron/rlvr_config.yaml)/14B/32B), Qwen3-MoE([30A3](examples/qwen3-30BA3B-rlvr_megatron/rlvr_config.yaml)/[235A22](examples/qwen3-235BA22B-rlvr_megatron/rlvr_config.yaml)), Qwen2.5([7B](examples/qwen2.5-7B-rlvr_megatron/rlvr_config.yaml)/14B/32B/72B) LLM models. |
-| **[05/30/2025]** 🎉 Training [RLVR](examples/qwen2.5-7B-rlvr_megatron/rlvr_config.yaml) and [Agentic RL](examples/qwen2.5-0.5B-agentic/agent_val_frozen_lake.yaml) with ROLL is now available! Explore the new capabilities.                                                                                                            |
----
+**FreshPER** is, to the best of our knowledge, the first method to successfully apply Prioritized Experience Replay (PER) to reinforcement learning of Large Language Models (LLMs) and Vision-Language Models (VLMs).
 
+On-policy algorithms that dominate LLM RL today — PPO, GRPO, REINFORCE++ — discard every collected trajectory after a single gradient update, which is especially wasteful in agentic settings where each multi-turn rollout can cost thousands of expensive tool/environment calls. A naïve port of PER does **not** fix this: the rapid policy evolution of billion-parameter models causes stored priorities to go stale, so old "high-priority" trajectories end up dominating sampling long after they have become uninformative.
 
-## 🚀 Get Started
+FreshPER augments **any** PER base priority with a multiplicative exponential **age decay** whose form is directly motivated by the exponential decay of effective sample size (ESS) as the current policy drifts away from the behavior policy. The decay is a modular layer — it can be stacked on top of reward-magnitude, advantage-magnitude, or TD-error priorities without changing the rest of the training stack.
 
-[Documents](https://alibaba.github.io/ROLL/)
+<p align="center"><i>
+p<sub>i</sub> = p<sub>i</sub><sup>base</sup> · exp(−τ<sub>i</sub> / τ)
+</i></p>
 
-### Quick Start
-[Installation](https://alibaba.github.io/ROLL/docs/English/QuickStart/installation)  
-[Config System Explanation](https://alibaba.github.io/ROLL/docs/English/QuickStart/config_system)  
-[Debugging Guide](https://alibaba.github.io/ROLL/docs/English/QuickStart/debugging_guide_en)  
-[Trackers and Metrics](https://alibaba.github.io/ROLL/docs/English/UserGuide/trackers_and_metrics)  
-[Checkpoint Saving and Resuming Guide](https://alibaba.github.io/ROLL/docs/English/UserGuide/checkpoint_and_resume)  
-[Converting MCoreAdapter Models to Hugging Face Format](https://alibaba.github.io/ROLL/docs/English/UserGuide/megatron_convert_2_hf)  
-[Quick Start: Single-Node Deployment Guide](https://alibaba.github.io/ROLL/docs/English/QuickStart/single_node_quick_start)  
-[Quick Start: Multi-Node Deployment Guide](https://alibaba.github.io/ROLL/docs/English/QuickStart/multi_node_quick_start)  
-[Frequently Asked Questions](https://alibaba.github.io/ROLL/docs/English/QuickStart/qa_issues)
+where τ<sub>i</sub> is the age (in gradient steps) of sample *i* since collection, and τ is the **age decay constant**. The half-life of priority is τ · ln 2.
 
-### UserGuide
+## Key Results
 
-#### Pipeline Step by Step
-[RLVR Pipeline](https://alibaba.github.io/ROLL/docs/English/UserGuide/pipeline/rlvr_pipeline_start)  
-[Agentic Pipeline](https://alibaba.github.io/ROLL/docs/English/UserGuide/pipeline/agentic_pipeline_start)  
-[Agentic Comprehensive Guide](https://alibaba.github.io/ROLL/docs/English/UserGuide/pipeline/agent_pipeline_start)  
-[Distill Pipeline](https://alibaba.github.io/ROLL/docs/English/UserGuide/pipeline/distill_pipeline_start)
+Evaluated on eight environments spanning agentic, reasoning, math-competition, and multi-modal tasks, with Qwen2.5-0.5B/7B-Instruct and Qwen2.5-VL-3B-Instruct. All runs use REINFORCE++ as the policy-gradient backbone.
 
-#### Algorithms
-[Reinforce++](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/Reinforce_Plus_Plus)  
-[TOPR](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/TOPR)  
-[GiGPO](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/agentic_GiGPO)  
-[PPO](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/PPO)  
-[Lite PPO](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/LitePPO)  
-[GRPO](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/GRPO)  
-[GSPO](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/GSPO)  
-[RAFT++](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/RAFT_Plus_Plus)  
-[StarPO](https://alibaba.github.io/ROLL/docs/English/UserGuide/algorithms/agentic_StarPO)
+| Task            | Modality | Metric      | On-Policy | Standard PER | **FreshPER (Ours)** |    Δ    |
+| --------------- | :------: | ----------- | :-------: | :----------: | :-----------------: | :-----: |
+| NQ Search       |   LLM    | EM          |   0.508   |    0.336     |      **0.742**      |  +46%   |
+| AIME            |   LLM    | Success     |   0.205   |    0.168     |      **0.242**      |  +18%   |
+| Sokoban Simple  |   LLM    | Score       |   0.493   |    −0.907    |      **2.304**      |  +367%  |
+| Sokoban Hard    |   LLM    | Score       |  −0.842   |    −0.847    |     **−0.512**      |    —    |
+| FrozenLake      |   LLM    | Success     |   0.297   |    0.281     |      **0.305**      |         |
+| FrozenLake      | **VLM**  | Success     |   0.270   |    0.250     |      **0.630**      |  +133%  |
+| GeoQA           | **VLM**  | Success     |   0.475   |    0.447     |      **0.481**      |         |
 
-#### Backend
-[DeepSeed](https://alibaba.github.io/ROLL/docs/English/UserGuide/backend/deepspeed)  
-[Megatron](https://alibaba.github.io/ROLL/docs/English/UserGuide/backend/megatron)   
-[vLLM](https://alibaba.github.io/ROLL/docs/English/UserGuide/backend/vllm)  
-[SGLang](https://alibaba.github.io/ROLL/docs/English/UserGuide/backend/sglang)
+Standard PER (no age decay) consistently under-performs the on-policy baseline — and collapses on Sokoban Simple and NQ Search — empirically confirming the priority-staleness failure mode that FreshPER is designed to fix. See Section 4 of the paper for full learning curves, the τ ablation, and the IS-correction ablation.
 
-#### Advanced Features
-[Agentic Asynchronous Parallel Rollout](https://alibaba.github.io/ROLL/docs/English/UserGuide/agentic_async_parallel_rollout)  
-[Agentic Asynchronous Training Feature](https://alibaba.github.io/ROLL/docs/English/UserGuide/async_training_agentic)  
+## Method at a Glance
 
-#### Performance Optimization & Resource Management 
-[Resource Config](https://alibaba.github.io/ROLL/docs/English/UserGuide/device_mapping)   
-[GPU Time-Division Multiplexing Control](https://alibaba.github.io/ROLL/docs/English/UserGuide/offload_reload_control)  
+1. **Rollout.** The behavior policy μ generates multi-turn trajectories; behavior log-probs and rewards are recorded at collection time.
+2. **Replay buffer.** Trajectories are stored with a *base priority* p<sup>base</sup>: `|reward|+ε` for critic-free methods (REINFORCE++, GRPO), `|advantage|+ε` for actor-critic (PPO), or `|TD-error|+ε` for classical PER.
+3. **Async age refresh.** A background CPU thread refreshes the age decay `exp(−τᵢ/τ)` for every buffer entry each training iteration — O(N) scan, naturally pipelined with GPU training.
+4. **Prioritized sampling.** A sum segment tree enables O(log N) per-sample draws; stratified sampling reduces variance. An importance-sampling correction (β annealed 0.4 → 1.0) compensates for non-uniform sampling bias.
+5. **Update.** Policy is updated on both (a) the fresh on-policy batch and (b) K off-policy replay batches per iteration.
 
+See Algorithm 1 in the paper for the full training loop.
 
----
+## Repository Layout
 
-## ✨ Key Features
-*   **Multi-task RL Training (RLVR):** Covers mathematics, coding, general reasoning, open-ended Q&A, instruction following, etc.
-    *   Flexible `domain_batch_size` distribution control.
-    *   **Sample-level asynchronous parallel Rollout**, asynchronous reward calculation, and dynamic sampling.
-    *   Asynchronous training under implementation.
-*   **Agentic RL:** Multi-turn interaction capabilities for games, multi-turn dialogues, tool use, etc.
-    *   Environment-level **asynchronous parallel rollout**.
-    *   Supports **asynchronous training**.
-    *   Multi-turn interaction rollout supports **local debugging**, improving multi-turn interaction business development efficiency.
-    *   Supports **TrajectoryWise (StartPO)** and **StepWise (GiGPO)** training paradigms.
-*   **Algorithm-Friendly:** Provides flexible and rich RL strategy configurations by default.
-    *   Over 20 rich reinforcement learning strategy options, such as reward normalization, reward clipping, various advantage estimation methods, etc.
-    *   Out-of-the-box support for reinforcement learning algorithms, such as **PPO, GRPO, Reinforce++, TOPR, RAFT++, GSPO**, etc.
-*   **Rich Training and Inference Engine:** Ray-based multi-role distributed architecture; Strategy abstraction unifies various backends, enabling easy operation from single machines to thousands-of-GPU clusters.
-    *   Inference/Generation supports vLLM, SGLang.
-    *   Training supports DeepSpeed (ZeRO), Megatron-LM 5D parallelism (mcore-adapter, dp/tp/pp/cp/ep), FSDP under implementation.
-    *   Extreme offload/reload capabilities.
-    *   Supports [LoRA](https://alibaba.github.io/ROLL/docs/English/UserGuide/backend/lora) training.
-    *   Supports FP8 rollout (FP8 inference for LLM as judge, FP8 rollout with BF16 training under development).
-*   **AutoDeviceMapping:** Supports custom device mapping for different roles, flexibly managing colocated and disaggregated deployments.
-*   **Observability:** Integrated with SwanLab / WandB / TensorBoard, tracking of performance for each domain and reward type.
-*   **Rich Post-training Technical Support:**
-    *   Agentic RL LLM & VLM
-    *   RLVR LLM & VLM
-    *   Distill Pipeline LLM & VLM
-    *   DPO Pipeline
-    *   SFT Pipeline under development
+This repository builds directly on the [ROLL](https://github.com/alibaba/ROLL) framework. The FreshPER-specific additions live under:
 
+```
+roll/agentic/replay_buffer/
+├── base_buffer.py          # Abstract buffer with priority, age, and IS-correction support
+├── trajectory_buffer.py    # Trajectory-level replay buffer
+├── step_buffer.py          # Step-level replay buffer
+├── priority_functions.py   # Priority functions, including `reward_fresh` (our addition)
+├── segment_tree.py         # Sum segment tree for O(log N) prioritized sampling
+└── buffer_factory.py       # Buffer construction from config
 
+examples/replay_buffer/     # Example YAML configs for replay + FreshPER
+docs/replay_buffer.md       # Design notes for the replay buffer subsystem
+docs/age_decay_issue_analysis.md   # Deep-dive on priority staleness
+```
 
----
+## Quick Start
 
-## 🔮 Upcoming Features
+### Installation
 
-We are continuously working to expand ROLL's capabilities:
-* ⏱️ **Async RLVR pipeline**: For even more efficient and streamlined asynchronous operations.
-* ⚙️ **FSDP2**: Integrating the latest Fully Sharded Data Parallel techniques.
-* 🔍 **Support DeepseekV3**: Adding compatibility for the newest Deepseek models.
+Follow the upstream [ROLL installation guide](https://alibaba.github.io/ROLL/docs/English/QuickStart/installation); FreshPER requires no extra dependencies beyond ROLL.
 
----
+```bash
+git clone --recursive https://github.com/Vision-CAIR/Freshness-Aware-PER.git
+cd Freshness-Aware-PER
+# then follow ROLL's environment setup
+```
 
-## 🏆 Notable work based on ROLL
-- [RecGPT](https://www.arxiv.org/abs/2507.22879): a next-generation, LLM-driven framework that places user intent at the core of recommender systems, fostering a more sustainable and mutually beneficial ecosystem.
-- [TaoSR1](https://arxiv.org/abs/2508.12365): A novel LLM framework directly deploying Chain-of-Thought (CoT) reasoning for e-commerce query-product relevance prediction, overcoming deployment challenges for superior performance.
------
+### Enabling FreshPER in a config
 
-## 🙏 Citation and Acknowledgement
+FreshPER is opt-in via a few fields in the agentic pipeline config:
 
-ROLL is inspired by the design of OpenRLHF, VeRL, Nemo-Aligner, and RAGEN.
-The project is developed by Alibaba TAOBAO & TMALL Group and Alibaba Group. The code is distributed under the Apache License (Version 2.0). This product contains various third-party components under other open-source licenses. See the `NOTICE` file for more information.
+```yaml
+replay:
+  enabled: true
+  capacity: 50000
+  sampling_mode: trajectory     # or "step"
+  min_size: ${rollout_batch_size}
 
-The following repositories have been used in ROLL, either in their close-to-original form or as an inspiration:
+  # --- Prioritized sampling ---
+  priority_function: reward_fresh       # |reward| × exp(-age/τ)
+  priority_exponent: 0.6                # α in PER
+  importance_sampling_correction: true  # enable IS correction
+  importance_beta: 0.4                  # β, annealed → 1.0
 
-  * [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM)
-  * [microsoft/DeepSpeed](https://github.com/microsoft/DeepSpeed)
-  * [sgl-project/sglang](https://github.com/sgl-project/sglang)
-  * [vllm-project/vllm](https://github.com/vllm-project/vllm)
+  # --- Freshness-aware age decay (this repo's contribution) ---
+  enable_age_decay: true
+  age_decay: 500                        # τ; paper default 500, FrozenLake uses 1000
+  refresh_interval: 1                   # async refresh every training step
+```
 
-If you use ROLL in your research or project, please consider citing us:
+All knobs are documented in [`roll/pipeline/agentic/agentic_config.py`](roll/pipeline/agentic/agentic_config.py). A good starting point for hands-on experimentation is `examples/replay_buffer/`.
+
+### Running an example
+
+```bash
+# Example: FrozenLake with trajectory-level FreshPER
+python examples/start_agentic_pipeline.py \
+  --config_path examples/replay_buffer \
+  --config_name agent_val_frozen_lake_trajrb_step_trainer
+```
+
+### Tuning tips from the paper
+
+- **τ = 500** is a solid default. Harder / faster-evolving tasks (Sokoban) benefit from more aggressive decay; slower-evolving tasks (FrozenLake) prefer τ ≈ 1000.
+- The benefit of replay scales with task difficulty. On near-saturated tasks (GSM8K, CliffWalking) replay adds little; on hard agentic/VLM tasks it can 2–4× the score.
+- Adding the IS correction (β = 0.4) rarely changes peak performance but markedly improves late-stage training stability.
+
+## Citation
+
+If you use this code or build on our work, please cite:
 
 ```bibtex
-@article{wang2025reinforcement,
-  title={Reinforcement Learning Optimization for Large-Scale Learning: An Efficient and User-Friendly Scaling Library},
-  author={Wang, Weixun and Xiong, Shaopan and Chen, Gengru and Gao, Wei and Guo, Sheng and He, Yancheng and Huang, Ju and Liu, Jiaheng and Li, Zhendong and Li, Xiaoyang and others},
-  journal={arXiv preprint arXiv:2506.06122},
-  year={2025}
+@article{ma2026freshper,
+  title   = {Freshness-Aware Prioritized Experience Replay for LLM/VLM Reinforcement Learning},
+  author  = {Ma, Weiyu and Zeng, Yongcheng and Song, Yan and Cui, Xinyu and
+             Zhao, Jian and Liu, Xuhui and Elhoseiny, Mohamed},
+  journal = {arXiv preprint arXiv:2604.16918},
+  year    = {2026}
 }
 ```
 
+## Acknowledgements
 
+This project is built on top of the excellent **[ROLL](https://github.com/alibaba/ROLL)** framework by the Alibaba ROLL team. FreshPER is implemented as an additive layer inside ROLL's agentic pipeline — the distributed runtime, inference/training backends (DeepSpeed, Megatron-Core, vLLM, SGLang), multi-turn environment abstractions, and agentic tooling are all inherited from upstream. We are deeply grateful to the ROLL team for releasing such a clean, modular, and high-performance RL library for LLMs; our work would not exist without it. Please also consider citing ROLL:
 
------
+```bibtex
+@article{wang2025roll,
+  title   = {Reinforcement Learning Optimization for Large-Scale Learning: An Efficient and User-Friendly Scaling Library},
+  author  = {Wang, Weixun and others},
+  journal = {arXiv preprint arXiv:2506.06122},
+  year    = {2025}
+}
+```
 
-## 🤝 About [ROLL Team]
-ROLL is a project jointly developed by Taotian Future Life Lab and Aicheng Technology, with a strong emphasis on pioneering the future of Reinforcement Learning (RL). Our mission is to explore and shape innovative forms of future living powered by advanced RL technologies. If you are passionate about the future of RL and want to be part of its evolution, we warmly welcome you to join us! Learn more about the ROLL Team through our official channels below👇
+We also thank the authors of Schaul et al. (2016) for the original PER formulation, and the Qwen team for open-sourcing the Qwen2.5 / Qwen2.5-VL models used in our experiments.
 
-<a href="./assets/roll_wechat.png" target="_blank">
-  <img src="https://img.shields.io/badge/WeChat-green?logo=wechat" alt="WeChat QR">
-</a>
+This research was supported by funding from the King Abdullah University of Science and Technology (KAUST) Center of Excellence for Generative AI under Award No. 5940.
 
------
-We are HIRING! 
-- Post Training Infra 研发工程师 [JD link](https://talent-holding.alibaba.com/off-campus/position-detail?lang=zh&positionId=7000016304)
-- 大模型训练专家： 
-  - （社招）[JD link](https://talent.taotian.com/off-campus/position-detail?lang=zh&positionId=7000024203)
-  - （校招）[JD link](https://talent.taotian.com/campus/position-detail?positionId=199900140053)
-- Infra 研究型实习生 [JD link](https://talent-holding.alibaba.com/campus/position-detail?lang=zh&positionId=59900004115)
+## License
 
------
-
-<div align="center">
-We welcome contributions from the community! 🤝
-</div>
+Released under the [Apache License 2.0](LICENSE), consistent with upstream ROLL.
